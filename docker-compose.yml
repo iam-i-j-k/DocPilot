@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: docpilot-redis
+    ports:
+      - "6379:6379"
+
+  api:
+    build: ./backend
+    container_name: docpilot-api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      - redis
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./output:/app/output
+
+  worker:
+    build: ./backend
+    container_name: docpilot-worker
+    command: celery -A worker worker --loglevel=info
+    env_file: .env
+    depends_on:
+      - redis
+    volumes:
+      - ./backend/uploads:/app/uploads
+      - ./output:/app/output
