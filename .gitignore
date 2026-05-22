@@ -25,6 +25,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# DB
+*.db
+.db
+
 # Virtual environments
 .venv/
 venv/

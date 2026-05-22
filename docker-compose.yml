@@ -8,7 +8,9 @@ services:
       - "6379:6379"
 
   api:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: docpilot-api
     ports:
       - "8000:8000"
@@ -20,7 +22,9 @@ services:
       - ./output:/app/output
 
   worker:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: docpilot-worker
     command: celery -A worker worker --loglevel=info
     env_file: .env

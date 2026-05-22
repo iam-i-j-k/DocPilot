@@ -2,10 +2,24 @@ import os
 import re
 import subprocess
 import shutil
+import datetime
 from typing import List, Dict, Any
 from PIL import Image
 import pdfplumber
 import pytesseract
+
+def log_to_file(message: str):
+    """
+    Writes persistent tracking logs to the shared output directory.
+    """
+    try:
+        log_path = os.path.join(os.getenv("OUTPUT_DIR", "/app/output"), "docpilot_pipeline.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        timestamp = datetime.datetime.now().isoformat()
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(f"[{timestamp}] {message}\n")
+    except Exception:
+        pass
 
 class PDFParser:
     """
@@ -24,6 +38,7 @@ class PDFParser:
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
         try:
+            log_to_file(f"PDFParser.is_scanned: Running pdftotext on page 1 of {pdf_path}")
             # Run pdftotext on page 1 only to standard out
             result = subprocess.run(
                 ["pdftotext", "-f", "1", "-l", "1", pdf_path, "-"],
@@ -34,18 +49,25 @@ class PDFParser:
             text = result.stdout or ""
             # Strip whitespace to get meaningful character count
             meaningful_chars = re.sub(r"\s+", "", text)
-            return len(meaningful_chars) < 80
+            is_scanned_res = len(meaningful_chars) < 80
+            log_to_file(f"PDFParser.is_scanned: Result is {is_scanned_res} (meaningful chars found: {len(meaningful_chars)})")
+            return is_scanned_res
         except Exception as e:
+            log_to_file(f"PDFParser.is_scanned: pdftotext failed ({str(e)}). Falling back to pdfplumber...")
             # Fallback check if pdftotext is not available or errors
             # Let's open with pdfplumber and inspect the first page
             try:
                 with pdfplumber.open(pdf_path) as pdf:
                     if not pdf.pages:
+                        log_to_file("PDFParser.is_scanned: PDF has 0 pages. Flagging as scanned (True)")
                         return True
                     text = pdf.pages[0].extract_text() or ""
                     meaningful_chars = re.sub(r"\s+", "", text)
-                    return len(meaningful_chars) < 80
-            except Exception:
+                    is_scanned_res = len(meaningful_chars) < 80
+                    log_to_file(f"PDFParser.is_scanned pdfplumber fallback result: {is_scanned_res}")
+                    return is_scanned_res
+            except Exception as fb_err:
+                log_to_file(f"PDFParser.is_scanned fallback also failed ({str(fb_err)}). Defaulting to scanned (True)")
                 return True
 
     @staticmethod
@@ -54,12 +76,15 @@ class PDFParser:
         Extracts layout-preserved text from each page using pdftotext.
         Cleans headers, footers, and common/specific watermark lines.
         """
+        log_to_file(f"PDFParser.extract_text_pages: Initializing text extraction for {pdf_path}")
         pages_text: List[str] = []
         try:
             # Use pdfplumber to safely get page count
             with pdfplumber.open(pdf_path) as pdf:
                 page_count = len(pdf.pages)
-        except Exception:
+            log_to_file(f"PDFParser.extract_text_pages: Determined page count is {page_count} via pdfplumber")
+        except Exception as p_err:
+            log_to_file(f"PDFParser.extract_text_pages: pdfplumber page count failed ({str(p_err)}). Falling back to pdfinfo...")
             # Fallback page count extraction via pdfinfo
             page_count = 1
             try:
@@ -67,11 +92,14 @@ class PDFParser:
                 match = re.search(r"Pages:\s+(\d+)", info_res.stdout)
                 if match:
                     page_count = int(match.group(1))
-            except Exception:
+                log_to_file(f"PDFParser.extract_text_pages: Determined page count is {page_count} via pdfinfo")
+            except Exception as info_err:
+                log_to_file(f"PDFParser.extract_text_pages fallback info failed ({str(info_err)}). Using 1 as boundary.")
                 pass
 
         for page_num in range(1, page_count + 1):
             try:
+                log_to_file(f"PDFParser.extract_text_pages: Extracting Page {page_num} of {page_count} using pdftotext...")
                 # Run pdftotext with -layout option on each specific page
                 res = subprocess.run(
                     ["pdftotext", "-layout", "-f", str(page_num), "-l", str(page_num), pdf_path, "-"],
@@ -82,7 +110,9 @@ class PDFParser:
                 raw_text = res.stdout or ""
                 cleaned_text = PDFParser._clean_page_text(raw_text)
                 pages_text.append(cleaned_text)
-            except Exception:
+                log_to_file(f"PDFParser.extract_text_pages: Successfully extracted and cleaned page {page_num}")
+            except Exception as page_exc:
+                log_to_file(f"PDFParser.extract_text_pages: Error extracting page {page_num} ({str(page_exc)}). Appending empty string.")
                 pages_text.append("")
         
         return pages_text
@@ -93,12 +123,34 @@ class PDFParser:
         Extracts tables from native/scanned text pages utilizing pdfplumber.
         Returns a dictionary mapping 1-indexed page numbers to table list representation.
         """
+        log_to_file("PDFParser.extract_tables: Initializing table extraction...")
         tables_by_page: Dict[int, List[List[Any]]] = {}
         try:
             with pdfplumber.open(pdf_path) as pdf:
+                total_pages = len(pdf.pages)
+                log_to_file(f"PDFParser.extract_tables: Parsing {total_pages} pages for tables...")
                 for idx, page in enumerate(pdf.pages):
                     page_num = idx + 1
+                    
+                    # SYSTEM SAFETY AND OPTIMIZATION CORES:
+                    # In complex physical/academic charts (drawing lines, CAD matrices, vectors),
+                    # pdfplumber attempts to form intersections which is O(N^2) or O(N^3) CPU-stuck loop.
+                    # We check and pre-filter vectors.
+                    rects_count = len(page.rects) if hasattr(page, "rects") else 0
+                    lines_count = len(page.lines) if hasattr(page, "lines") else 0
+                    images_count = len(page.images) if hasattr(page, "images") else 0
+                    
+                    log_to_file(f"PDFParser.extract_tables Check: Page {page_num} size/layout elements -> Rects: {rects_count}, Lines: {lines_count}, Images: {images_count}")
+                    
+                    if rects_count + lines_count > 500:
+                        log_to_file(f"PDFParser.extract_tables WARNING: Skipping page {page_num} table extraction. Content has {rects_count + lines_count} vector objects, which can hang pdfplumber's line analyzer.")
+                        tables_by_page[page_num] = []
+                        continue
+                    
+                    log_to_file(f"PDFParser.extract_tables: Extracting tables from Page {page_num} of {total_pages}...")
                     extracted = page.extract_tables()
+                    log_to_file(f"PDFParser.extract_tables: Completed extraction for Page {page_num}. Found {len(extracted) if extracted else 0} tables.")
+                    
                     if extracted:
                         # Clean empty or None table values to empty strings
                         cleaned_extracted = []
@@ -111,8 +163,9 @@ class PDFParser:
                         tables_by_page[page_num] = cleaned_extracted
                     else:
                         tables_by_page[page_num] = []
-        except Exception:
-            pass
+        except Exception as e:
+            log_to_file(f"PDFParser.extract_tables: CRITICAL ERROR in extracting tables: {str(e)}")
+            tables_by_page[-1] = []  # sentinel key: worker checks for -1 to detect partial failure
         return tables_by_page
 
     @staticmethod
@@ -189,8 +242,8 @@ class PDFParser:
                     "word_num": data['word_num'][i]
                 }
                 blocks.append(block)
-        except Exception:
-            pass
+        except Exception as e:
+            raise RuntimeError(f"OCR layout extraction failed on {img_path}: {str(e)}")
         return blocks
 
     @staticmethod

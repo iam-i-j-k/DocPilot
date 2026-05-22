@@ -8,11 +8,11 @@ export interface Job {
   output_path?: string | null;
 }
 
-// Support hitting relative proxy '/api' or direct backend endpoints
-const BASE_URL = (import.meta as any).env?.VITE_API_URL || '';
+// Direct backend URL
+const BASE_URL = 'http://localhost:8000';
 
 export async function fetchJobs(): Promise<Job[]> {
-  const response = await fetch(`${BASE_URL}/api/jobs`);
+  const response = await fetch(`${BASE_URL}/jobs`);
   if (!response.ok) {
     throw new Error(`Failed to retrieve jobs list: ${response.statusText}`);
   }
@@ -23,7 +23,7 @@ export async function uploadPdfFile(file: File): Promise<{ job_id: string; statu
   const formData = new FormData();
   formData.append('file', file);
 
-  const response = await fetch(`${BASE_URL}/api/upload`, {
+  const response = await fetch(`${BASE_URL}/upload`, {
     method: 'POST',
     body: formData,
   });
@@ -37,5 +37,15 @@ export async function uploadPdfFile(file: File): Promise<{ job_id: string; statu
 }
 
 export function getDownloadUrl(jobId: string): string {
-  return `${BASE_URL}/api/jobs/${jobId}/download`;
+  return `${BASE_URL}/jobs/${jobId}/download`;
+}
+
+export async function cancelJob(jobId: string): Promise<void> {
+  const response = await fetch(`${BASE_URL}/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to cancel job: ${response.statusText}`);
+  }
 }

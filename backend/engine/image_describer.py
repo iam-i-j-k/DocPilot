@@ -90,7 +90,7 @@ class ImageDescriber:
         ]
 
         # Use Groq's recommended Llama-3.2 vision model
-        model_name = "llama-3.2-11b-vision-preview"
+        model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
 
         try:
             # Step 1: Attempt structured Tool selection API call
@@ -135,18 +135,18 @@ class ImageDescriber:
 
         return "[No description extracted]"
 
-    def sanitize(self, text: str) -> str:
+    def sanitize(self, text: str, collapse_newlines: bool = True) -> str:
         """
         Collapses all carriage carriage returns and newlines into spaces, and reduces multiple 
         consecutive spaces down to a single whitespace character. Returns trimmed text.
         """
-        if not text:
-            return ""
-        # Collapse all \r\n and \n into spaces
-        text = text.replace("\r\n", " ").replace("\n", " ")
-        # Collapse multiple spaces
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()
+        def sanitize(self, text: str, collapse_newlines: bool = True) -> str:
+            if not text:
+                return ""
+            if collapse_newlines:
+                text = text.replace("\r\n", " ").replace("\n", " ")
+                text = re.sub(r"\s+", " ", text)
+            return text.strip()
 
     def _attempt_recovery_from_error(self, exc: Exception) -> str:
         """

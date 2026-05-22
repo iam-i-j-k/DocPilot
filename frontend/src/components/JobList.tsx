@@ -12,7 +12,7 @@ export const JobList: React.FC<JobListProps> = ({ refreshTrigger }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pollingIntervalRef = useRef<number | null>(null);
 
   const loadJobsAndVerifyPolling = async (showLoading = false) => {
     if (showLoading) {

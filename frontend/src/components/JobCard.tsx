@@ -1,12 +1,14 @@
-import React from 'react';
-import { Download, AlertCircle, Clock, CheckCircle, FileText, Loader2 } from 'lucide-react';
-import { Job, getDownloadUrl } from '../api';
+import React, { useState } from 'react';
+import { Download, AlertCircle, Clock, CheckCircle, FileText, Loader2, X } from 'lucide-react';
+import { Job, getDownloadUrl, cancelJob } from '../api';
 
 interface JobCardProps {
   job: Job;
 }
 
 export const JobCard: React.FC<JobCardProps> = ({ job }) => {
+  const [isCancelling, setIsCancelling] = useState(false);
+
   // Format the ISO creation date cleanly
   const formatDateTime = (isoString: string): string => {
     try {
@@ -69,6 +71,24 @@ export const JobCard: React.FC<JobCardProps> = ({ job }) => {
     const downloadUrl = getDownloadUrl(job.job_id);
     window.location.href = downloadUrl;
   };
+
+  const handleCancel = async () => {
+    if (!window.confirm('Are you sure you want to cancel this job?')) {
+      return;
+    }
+
+    setIsCancelling(true);
+    try {
+      await cancelJob(job.job_id);
+      // Job will be updated on next poll
+    } catch (err) {
+      alert('Failed to cancel job. Please try again.');
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
+  const isCancellable = ['queued', 'parsing', 'extracting_images', 'describing_images', 'writing'].includes(job.status);
 
   return (
     <div
@@ -143,8 +163,8 @@ export const JobCard: React.FC<JobCardProps> = ({ job }) => {
       </div>
 
       {/* Primary actions */}
-      {job.status === 'completed' && (
-        <div className="mt-4 flex justify-end">
+      <div className="mt-4 flex justify-end gap-2">
+        {job.status === 'completed' && (
           <button
             id={`download-zip-btn-${job.job_id}`}
             onClick={handleDownload}
@@ -153,8 +173,19 @@ export const JobCard: React.FC<JobCardProps> = ({ job }) => {
             <Download className="w-3.5 h-3.5" />
             Download Markdown ZIP
           </button>
-        </div>
-      )}
+        )}
+        {isCancellable && (
+          <button
+            id={`cancel-job-btn-${job.job_id}`}
+            onClick={handleCancel}
+            disabled={isCancelling}
+            className="inline-flex items-center gap-2 text-xs font-semibold px-4 py-2 bg-red-600 text-white hover:bg-red-700 disabled:bg-red-400 disabled:cursor-not-allowed active:scale-98 rounded-lg shadow-xs transition-all"
+          >
+            <X className="w-3.5 h-3.5" />
+            {isCancelling ? 'Cancelling...' : 'Cancel Job'}
+          </button>
+        )}
+      </div>
     </div>
   );
 };
