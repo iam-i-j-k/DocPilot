@@ -9,7 +9,7 @@ export interface Job {
 }
 
 // Direct backend URL
-const BASE_URL = 'http://localhost:8000';
+const BASE_URL = 'https://docpilot-zncb.onrender.com';
 
 export async function fetchJobs(): Promise<Job[]> {
   const response = await fetch(`${BASE_URL}/jobs`);
