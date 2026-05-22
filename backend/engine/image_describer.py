@@ -2,8 +2,8 @@ import os
 import re
 import base64
 import json
-from typing import Any
 from groq import Groq
+
 
 class ImageDescriber:
     """
@@ -16,13 +16,13 @@ class ImageDescriber:
         Initializes the Groq client. Uses GROQ_API_KEY environment variable if not passed.
         """
         self.api_key = api_key or os.getenv("GROQ_API_KEY", "")
-        # Note: Do not launch client at module import time; lazy-initialize to prevent startup crashes.
+        # Lazy-initialize to prevent startup crashes if key is missing at import time.
         self._client = None
 
     @property
     def client(self) -> Groq:
         """
-        Property to support lazy initialization of the Groq client.
+        Lazy initialization of the Groq client.
         """
         if not self._client:
             if not self.api_key:
@@ -32,14 +32,15 @@ class ImageDescriber:
 
     def describe(self, image_path: str) -> str:
         """
-        Performs image analysis via Groq vision models.
-        First tries structured tool selection. Falls back to plain text prompting on errors, and 
-        recovers descriptions from Groq's validation error 'failed_generation' field if present.
+        Performs image analysis via Groq vision model.
+        Step 1: Structured tool call.
+        Step 2: Recover description from failed_generation in error body.
+        Step 3: Plain text vision call fallback.
         """
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Selected image not found: {image_path}")
-        
-        # Determine image mime-type
+
+        # Determine mime type
         mime_type = "image/png"
         if image_path.lower().endswith(".jpg") or image_path.lower().endswith(".jpeg"):
             mime_type = "image/jpeg"
@@ -47,10 +48,9 @@ class ImageDescriber:
         # Encode image to Base64
         with open(image_path, "rb") as image_file:
             encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
-        
+
         image_data_url = f"data:{mime_type};base64,{encoded_image}"
-        
-        # Tool definition schema for structured visual description
+
         tools = [
             {
                 "type": "function",
@@ -62,7 +62,10 @@ class ImageDescriber:
                         "properties": {
                             "description": {
                                 "type": "string",
-                                "description": "Rigorous markdown description of objects, layouts, charts, and visible texts."
+                                "description": (
+                                    "Rigorous description of objects, layouts, charts, "
+                                    "and visible texts in the image."
+                                )
                             }
                         },
                         "required": ["description"]
@@ -77,7 +80,10 @@ class ImageDescriber:
                 "content": [
                     {
                         "type": "text",
-                        "text": "Please provide an accurate and clean outline/description of the visual content in this image."
+                        "text": (
+                            "Please provide an accurate and detailed description of the visual "
+                            "content in this image. Avoid using apostrophes or single quotes."
+                        )
                     },
                     {
                         "type": "image_url",
@@ -89,11 +95,10 @@ class ImageDescriber:
             }
         ]
 
-        # Use Groq's recommended Llama-3.2 vision model
         model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
 
         try:
-            # Step 1: Attempt structured Tool selection API call
+            # Step 1: Structured tool call
             response = self.client.chat.completions.create(
                 model=model_name,
                 messages=messages,
@@ -102,25 +107,26 @@ class ImageDescriber:
                 temperature=0.2
             )
 
-            # Retrieve the tool outputs
             choice = response.choices[0]
+
             if choice.message.tool_calls:
                 tool_call = choice.message.tool_calls[0]
                 arguments = json.loads(tool_call.function.arguments)
                 description = arguments.get("description", "")
                 return self.sanitize(description)
-            
-            # Simple fallback content if tool calls is empty
+
+            # Tool call was skipped, model replied in plain text
             if choice.message.content:
                 return self.sanitize(choice.message.content)
 
         except Exception as e:
-            # Step 2: Extract from 'failed_generation' inside the exception if model validation failed
+            # Step 2: Groq's tool_use_failed error contains the actual description
+            # in the failed_generation field — recover it before falling back
             recovered_desc = self._attempt_recovery_from_error(e)
             if recovered_desc:
                 return self.sanitize(recovered_desc)
 
-            # Step 3: Fall back to plain text vision call on general tool call error
+            # Step 3: Plain text vision call — no tools
             try:
                 plain_response = self.client.chat.completions.create(
                     model=model_name,
@@ -130,49 +136,54 @@ class ImageDescriber:
                 text_content = plain_response.choices[0].message.content or ""
                 return self.sanitize(text_content)
             except Exception as final_err:
-                # Return graceful fallback string is everything fails
                 return f"[Image description unavailable: {str(final_err)}]"
 
         return "[No description extracted]"
 
     def sanitize(self, text: str, collapse_newlines: bool = True) -> str:
         """
-        Collapses all carriage carriage returns and newlines into spaces, and reduces multiple 
-        consecutive spaces down to a single whitespace character. Returns trimmed text.
+        Collapses carriage returns and newlines into spaces, reduces multiple
+        consecutive spaces to a single whitespace character. Returns trimmed text.
         """
-        def sanitize(self, text: str, collapse_newlines: bool = True) -> str:
-            if not text:
-                return ""
-            if collapse_newlines:
-                text = text.replace("\r\n", " ").replace("\n", " ")
-                text = re.sub(r"\s+", " ", text)
-            return text.strip()
+        if not text:
+            return ""
+        if collapse_newlines:
+            text = text.replace("\r\n", " ").replace("\n", " ")
+            text = re.sub(r"\s+", " ", text)
+        return text.strip()
 
     def _attempt_recovery_from_error(self, exc: Exception) -> str:
         """
-        Attempts to parse error object attributes or JSON body to extract 'failed_generation'.
+        Attempts to extract a usable description from Groq's failed_generation
+        error field, which contains the model output that failed JSON validation.
         """
         try:
-            # Groq errors have 'body' or 'message' string representations of JSON
-            exc_str = str(exc)
-            
-            # 1. Regex search for failed_generation inside error message
-            match = re.search(r'"failed_generation"\s*:\s*"([^"]+)"', exc_str)
-            if match:
-                return match.group(1)
-            
-            # 2. Try JSON loading from error body properties if present
+            # Primary: parse from exc.body if it's a structured dict
             if hasattr(exc, "body") and exc.body:
-                if isinstance(exc.body, dict):
-                    err_json = exc.body
-                else:
-                    err_json = json.loads(str(exc.body))
-                
-                # Dig nested properties
+                err_json = exc.body if isinstance(exc.body, dict) else json.loads(str(exc.body))
                 if "error" in err_json and isinstance(err_json["error"], dict):
                     failed_gen = err_json["error"].get("failed_generation")
                     if failed_gen:
+                        # failed_generation is a JSON array string:
+                        # [{"name": "submit_image_description", "parameters": {"description": "..."}}]
+                        try:
+                            parsed = json.loads(failed_gen)
+                            if isinstance(parsed, list) and parsed:
+                                desc = parsed[0].get("parameters", {}).get("description", "")
+                                if desc:
+                                    return desc
+                        except json.JSONDecodeError:
+                            pass
+                        # If JSON parse fails, return the raw string for sanitize to clean
                         return str(failed_gen)
+
+            # Fallback: regex search directly on the stringified exception
+            exc_str = str(exc)
+            match = re.search(r'"description"\s*:\s*"((?:[^"\\]|\\.)+)"', exc_str)
+            if match:
+                return match.group(1).replace('\\"', '"').replace("\\'", "'")
+
         except Exception:
             pass
+
         return ""
