@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Download, AlertCircle, Clock, CheckCircle, FileText, Loader2, X } from 'lucide-react';
-import { Job, getDownloadUrl, cancelJob } from '../api';
+import { type Job, getDownloadUrl, cancelJob } from '../api';
 
 interface JobCardProps {
   job: Job;
@@ -25,7 +25,10 @@ export const JobCard: React.FC<JobCardProps> = ({ job }) => {
     }
   };
 
-  const statusConfig = {
+  const statusConfig: Record<
+    Job['status'],
+    { color: string; label: string; icon: React.ComponentType<any> }
+  > = {
     queued: {
       color: 'bg-gray-100 text-gray-700 border-gray-200',
       label: 'Queued',

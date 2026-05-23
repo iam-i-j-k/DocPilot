@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { RefreshCcw, FileSpreadsheet, Radio } from 'lucide-react';
-import { Job, fetchJobs } from '../api';
+import { type Job, fetchJobs } from '../api';
 import { JobCard } from './JobCard';
 
 interface JobListProps {
@@ -25,7 +25,7 @@ export const JobList: React.FC<JobListProps> = ({ refreshTrigger }) => {
 
       // Check if there are active jobs that require polling
       const hasActive = data.some(
-        (job) => job.status !== 'completed' && job.status !== 'failed'
+        (job: Job) => job.status !== 'completed' && job.status !== 'failed'
       );
       setIsPolling(hasActive);
     } catch (err: any) {

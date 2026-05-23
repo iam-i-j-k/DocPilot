@@ -27,6 +27,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadSuccess }) => {
     setSuccess(false);
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
+      if (!file) return;
       if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
         setError('Only standard educational PDF files (.pdf) are allowed.');
         setSelectedFile(null);
@@ -53,6 +54,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onUploadSuccess }) => {
 
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
+      if (!file) return;
       if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
         setError('Only standard PDF files are allowed.');
         return;
